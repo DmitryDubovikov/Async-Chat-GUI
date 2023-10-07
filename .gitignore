@@ -1,3 +1,5 @@
 .idea
 venv
 minechat.history
+.env
+

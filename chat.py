@@ -1,10 +1,12 @@
 import argparse
 import asyncio
 import logging
+import os
 from contextlib import aclosing
 from datetime import datetime
 
 import aiofiles
+from dotenv import load_dotenv
 
 import gui
 
@@ -34,13 +36,22 @@ async def read_messages(reader, messages_queue, history_filename):
             await file.write(message + "\n")
 
 
-async def open_connection_and_read(host, port, messages_queue, history_filename):
+async def open_connection_and_read(
+    host, port, messages_queue, history_filename, account_hash
+):
     while True:
         try:
             async with aclosing(await asyncio.open_connection(host, port)) as (
                 reader,
                 writer,
             ):
+                authorised = await authorise(reader, writer, account_hash)
+                if not authorised:
+                    print(
+                        "Неизвестный токен. Проверьте его или зарегистрируйте заново."
+                    )
+                    return
+                logging.info(f"Выполнена авторизация. Пользователь {authorised}.")
                 await read_messages(reader, messages_queue, history_filename)
         except Exception as e:
             logging.error(f"An error occurred: {e}")
@@ -62,17 +73,32 @@ async def restore_messages(messages_queue, history_filename):
             await messages_queue.put(message)
 
 
+async def authorise(reader, writer, account_hash):
+    message = account_hash + "\n"
+    writer.write(message.encode())
+    await writer.drain()
+
+    data = await reader.read(1024)
+    response = data.decode()
+    if "null" in response:
+        return False
+    return True
+
+
 async def main(host, port, history_filename):
     messages_queue = asyncio.Queue()
     sending_queue = asyncio.Queue()
     status_updates_queue = asyncio.Queue()
 
+    load_dotenv()
+    account_hash = os.getenv("ACCOUNT_HASH")
+
     await restore_messages(messages_queue, history_filename)
 
     await asyncio.gather(
-        # asyncio.create_task(send_test_messages(messages_queue)),
-        # send_test_messages(messages_queue),
-        open_connection_and_read(host, port, messages_queue, history_filename),
+        open_connection_and_read(
+            host, port, messages_queue, history_filename, account_hash
+        ),
         send_message(host, port, sending_queue),
         gui.draw(messages_queue, sending_queue, status_updates_queue),
     )
