@@ -15,6 +15,12 @@ async def send_test_messages(messages_queue):
         await asyncio.sleep(10)
 
 
+async def send_message(host, port, messages_queue):
+    while True:
+        msg = await messages_queue.get()
+        print(msg)
+
+
 async def read_messages(reader, messages_queue, history_filename):
     while True:
         data = await reader.read(1024)
@@ -67,6 +73,7 @@ async def main(host, port, history_filename):
         # asyncio.create_task(send_test_messages(messages_queue)),
         # send_test_messages(messages_queue),
         open_connection_and_read(host, port, messages_queue, history_filename),
+        send_message(host, port, sending_queue),
         gui.draw(messages_queue, sending_queue, status_updates_queue),
     )
 
