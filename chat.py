@@ -1,8 +1,10 @@
 import argparse
 import asyncio
 import logging
-from datetime import datetime
 from contextlib import aclosing
+from datetime import datetime
+
+import aiofiles
 
 import gui
 
@@ -13,7 +15,7 @@ async def send_test_messages(messages_queue):
         await asyncio.sleep(10)
 
 
-async def read_messages(reader, messages_queue=None):
+async def read_messages(reader, messages_queue, history_filename):
     while True:
         data = await reader.read(1024)
         if not data:
@@ -21,17 +23,19 @@ async def read_messages(reader, messages_queue=None):
 
         message = data.decode().strip()
         await messages_queue.put(message)
-        logging.info(f"Message read: {message}")
+
+        async with aiofiles.open(history_filename, mode="a") as file:
+            await file.write(message + "\n")
 
 
-async def open_connection_and_read(host, port, messages_queue):
+async def open_connection_and_read(host, port, messages_queue, history_filename):
     while True:
         try:
             async with aclosing(await asyncio.open_connection(host, port)) as (
                 reader,
                 writer,
             ):
-                await read_messages(reader, messages_queue)
+                await read_messages(reader, messages_queue, history_filename)
         except Exception as e:
             logging.error(f"An error occurred: {e}")
         finally:
@@ -44,15 +48,25 @@ async def open_connection_and_read(host, port, messages_queue):
         await asyncio.sleep(5)
 
 
-async def main(host, port):
+async def restore_messages(messages_queue, history_filename):
+    async with aiofiles.open(history_filename, mode="r") as file:
+        lines = await file.readlines()
+        for line in lines:
+            message = line.strip()
+            await messages_queue.put(message)
+
+
+async def main(host, port, history_filename):
     messages_queue = asyncio.Queue()
     sending_queue = asyncio.Queue()
     status_updates_queue = asyncio.Queue()
 
+    await restore_messages(messages_queue, history_filename)
+
     await asyncio.gather(
         # asyncio.create_task(send_test_messages(messages_queue)),
-        send_test_messages(messages_queue),
-        open_connection_and_read(host, port, messages_queue),
+        # send_test_messages(messages_queue),
+        open_connection_and_read(host, port, messages_queue, history_filename),
         gui.draw(messages_queue, sending_queue, status_updates_queue),
     )
 
@@ -82,4 +96,4 @@ if __name__ == "__main__":
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
     )
 
-    asyncio.run(main(args.host, args.port))
+    asyncio.run(main(args.host, args.port, args.history_filename))
