@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import json
 import logging
 import os
 from contextlib import aclosing
@@ -51,6 +52,7 @@ async def open_connection_and_write(
             if not authorised:
                 print("Неизвестный токен. Проверьте его или зарегистрируйте заново.")
                 return
+            logging.info(f"Выполнена авторизация. Пользователь {authorised}.")
             await send_messages(writer, sending_queue)
     except Exception as e:
         logging.error(f"An error occurred: {e}")
@@ -82,6 +84,23 @@ async def restore_messages(messages_queue, history_filename):
             await messages_queue.put(message)
 
 
+def get_nickname(input_string):
+    start_index = input_string.find("{")
+    end_index = input_string.find("}") + 1
+
+    json_data = input_string[start_index:end_index]
+
+    # Распарсить JSON-данные и получить значение по ключу "nickname"
+    try:
+        data = json.loads(json_data)
+        nickname = data["nickname"]
+        return nickname
+    except json.JSONDecodeError as e:
+        return f"Error decoding JSON: {e}"
+    except KeyError as e:
+        return f"KeyError: 'nickname' key not found in JSON data"
+
+
 async def authorise(reader, writer, account_hash):
     message = account_hash + "\n"
     writer.write(message.encode())
@@ -91,7 +110,7 @@ async def authorise(reader, writer, account_hash):
     response = data.decode()
     if "null" in response:
         return False
-    return True
+    return get_nickname(response)
 
 
 async def main(host, port_read, port_write, history_filename):
@@ -105,7 +124,7 @@ async def main(host, port_read, port_write, history_filename):
     await restore_messages(messages_queue, history_filename)
 
     await asyncio.gather(
-        open_connection_and_read(host, port_read, messages_queue, history_filename),
+        # open_connection_and_read(host, port_read, messages_queue, history_filename),
         open_connection_and_write(
             host, port_write, messages_queue, sending_queue, account_hash
         ),
