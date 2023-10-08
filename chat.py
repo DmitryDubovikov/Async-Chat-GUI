@@ -11,16 +11,19 @@ from dotenv import load_dotenv
 import gui
 
 
-async def send_test_messages(messages_queue):
+async def send_test_messages(sending_queue):
     while True:
-        await messages_queue.put(datetime.timestamp(datetime.now()))
+        await sending_queue.put(datetime.timestamp(datetime.now()))
         await asyncio.sleep(10)
 
 
-async def send_message(host, port, messages_queue):
+async def send_messages(writer, sending_queue):
     while True:
-        msg = await messages_queue.get()
-        print(msg)
+        message = await sending_queue.get()
+        logging.info(f"Sending message: {message}")
+        writer.write(message.encode() + b"\n")
+        await writer.drain()
+        logging.info(f"Message '{message}' sent.")
 
 
 async def read_messages(reader, messages_queue, history_filename):
@@ -36,30 +39,36 @@ async def read_messages(reader, messages_queue, history_filename):
             await file.write(message + "\n")
 
 
-async def open_connection_and_read(
-    host, port, messages_queue, history_filename, account_hash
+async def open_connection_and_write(
+    host, port, messages_queue, sending_queue, account_hash
 ):
+    try:
+        async with aclosing(await asyncio.open_connection(host, port)) as (
+            reader,
+            writer,
+        ):
+            authorised = await authorise(reader, writer, account_hash)
+            if not authorised:
+                print("Неизвестный токен. Проверьте его или зарегистрируйте заново.")
+                return
+            await send_messages(writer, sending_queue)
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+    finally:
+        if not reader.at_eof():
+            reader.feed_eof()
+        writer.close()
+        await writer.wait_closed()
+
+
+async def open_connection_and_read(host, port, messages_queue, history_filename):
     while True:
         try:
-            async with aclosing(await asyncio.open_connection(host, port)) as (
-                reader,
-                writer,
-            ):
-                authorised = await authorise(reader, writer, account_hash)
-                if not authorised:
-                    print(
-                        "Неизвестный токен. Проверьте его или зарегистрируйте заново."
-                    )
-                    return
-                logging.info(f"Выполнена авторизация. Пользователь {authorised}.")
+            reader, _ = await asyncio.open_connection(host, port)
+            async with aclosing(reader):
                 await read_messages(reader, messages_queue, history_filename)
         except Exception as e:
             logging.error(f"An error occurred: {e}")
-        finally:
-            if not reader.at_eof():
-                reader.feed_eof()
-            writer.close()
-            await writer.wait_closed()
 
         # Sleep for some time before trying to reconnect
         await asyncio.sleep(5)
@@ -85,7 +94,7 @@ async def authorise(reader, writer, account_hash):
     return True
 
 
-async def main(host, port, history_filename):
+async def main(host, port_read, port_write, history_filename):
     messages_queue = asyncio.Queue()
     sending_queue = asyncio.Queue()
     status_updates_queue = asyncio.Queue()
@@ -96,10 +105,10 @@ async def main(host, port, history_filename):
     await restore_messages(messages_queue, history_filename)
 
     await asyncio.gather(
-        open_connection_and_read(
-            host, port, messages_queue, history_filename, account_hash
+        open_connection_and_read(host, port_read, messages_queue, history_filename),
+        open_connection_and_write(
+            host, port_write, messages_queue, sending_queue, account_hash
         ),
-        send_message(host, port, sending_queue),
         gui.draw(messages_queue, sending_queue, status_updates_queue),
     )
 
@@ -113,7 +122,16 @@ if __name__ == "__main__":
         help="Host name of the chat server",
     )
     parser.add_argument(
-        "--port", type=int, default=5000, help="Port number of the chat server"
+        "--port_read",
+        type=int,
+        default=5000,
+        help="Read port number of the chat server",
+    )
+    parser.add_argument(
+        "--port_write",
+        type=int,
+        default=5050,
+        help="Write port number of the chat server",
     )
     parser.add_argument(
         "--history",
@@ -129,4 +147,4 @@ if __name__ == "__main__":
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
     )
 
-    asyncio.run(main(args.host, args.port, args.history_filename))
+    asyncio.run(main(args.host, args.port_read, args.port_write, args.history_filename))
