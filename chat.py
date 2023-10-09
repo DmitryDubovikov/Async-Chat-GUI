@@ -21,10 +21,8 @@ async def send_messages(writer, sending_queue):
     while True:
         message = await sending_queue.get()
         message = message.replace("\n", "") + "\n"
-        # logging.info(f"Sending message: {message}")
         writer.write(message.encode() + b"\n")
         await writer.drain()
-        # logging.info(f"Message '{message}' sent.")
 
 
 async def read_messages(reader, messages_queue, history_filename):
@@ -41,16 +39,23 @@ async def read_messages(reader, messages_queue, history_filename):
 
 
 async def open_connection_and_write(
-    host, port, messages_queue, sending_queue, account_hash
+    host, port, messages_queue, sending_queue, status_updates_queue, account_hash
 ):
     try:
         async with aclosing(await asyncio.open_connection(host, port)) as (
             reader,
             writer,
         ):
+            message = gui.SendingConnectionStateChanged.ESTABLISHED
+            await status_updates_queue.put(message)
+
             try:
-                user = await authorise(reader, writer, account_hash)
-                logging.info(f"Выполнена авторизация. Пользователь {user}.")
+                nickname = await authorise(reader, writer, account_hash)
+                logging.info(f"Выполнена авторизация. Пользователь {nickname}.")
+
+                message = gui.NicknameReceived(nickname)
+                await status_updates_queue.put(message)
+
                 await send_messages(writer, sending_queue)
             except InvalidToken as e:
                 logging.error(f"An error occurred: {e}")
@@ -64,10 +69,16 @@ async def open_connection_and_write(
         await writer.wait_closed()
 
 
-async def open_connection_and_read(host, port, messages_queue, history_filename):
+async def open_connection_and_read(
+    host, port, messages_queue, status_updates_queue, history_filename
+):
     while True:
         try:
             reader, _ = await asyncio.open_connection(host, port)
+
+            message = gui.ReadConnectionStateChanged.ESTABLISHED
+            await status_updates_queue.put(message)
+
             async with aclosing(reader):
                 await read_messages(reader, messages_queue, history_filename)
         except Exception as e:
@@ -129,9 +140,16 @@ async def main(host, port_read, port_write, history_filename):
     await restore_messages(messages_queue, history_filename)
 
     await asyncio.gather(
-        open_connection_and_read(host, port_read, messages_queue, history_filename),
+        open_connection_and_read(
+            host, port_read, messages_queue, status_updates_queue, history_filename
+        ),
         open_connection_and_write(
-            host, port_write, messages_queue, sending_queue, account_hash
+            host,
+            port_write,
+            messages_queue,
+            sending_queue,
+            status_updates_queue,
+            account_hash,
         ),
         gui.draw(messages_queue, sending_queue, status_updates_queue),
     )
