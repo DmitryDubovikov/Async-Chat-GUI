@@ -3,13 +3,18 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from contextlib import aclosing
-from datetime import datetime
+from tkinter import messagebox
 
 import aiofiles
 from dotenv import load_dotenv
 
 import gui
+
+
+class InvalidToken(Exception):
+    pass
 
 
 async def send_messages(writer, sending_queue):
@@ -43,14 +48,15 @@ async def open_connection_and_write(
             reader,
             writer,
         ):
-            authorised = await authorise(reader, writer, account_hash)
-            if not authorised:
-                print("Неизвестный токен. Проверьте его или зарегистрируйте заново.")
-                return
-            logging.info(f"Выполнена авторизация. Пользователь {authorised}.")
-            await send_messages(writer, sending_queue)
+            try:
+                user = await authorise(reader, writer, account_hash)
+                logging.info(f"Выполнена авторизация. Пользователь {user}.")
+                await send_messages(writer, sending_queue)
+            except InvalidToken as e:
+                logging.error(f"An error occurred: {e}")
     except Exception as e:
         logging.error(f"An error occurred: {e}")
+        sys.exit()
     finally:
         if not reader.at_eof():
             reader.feed_eof()
@@ -104,7 +110,11 @@ async def authorise(reader, writer, account_hash):
     data = await reader.read(1024)
     response = data.decode()
     if "null" in response:
-        return False
+        messagebox.showerror(
+            "Ошибка",
+            "Неверный токен. Пожалуйста, проверьте ваш токен и попробуйте снова.",
+        )
+        raise InvalidToken("Неверный токен получен от сервера.")
     return get_nickname(response)
 
 
