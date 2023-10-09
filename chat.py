@@ -12,19 +12,14 @@ from dotenv import load_dotenv
 import gui
 
 
-async def send_test_messages(sending_queue):
-    while True:
-        await sending_queue.put(datetime.timestamp(datetime.now()))
-        await asyncio.sleep(10)
-
-
 async def send_messages(writer, sending_queue):
     while True:
         message = await sending_queue.get()
-        logging.info(f"Sending message: {message}")
+        message = message.replace("\n", "") + "\n"
+        # logging.info(f"Sending message: {message}")
         writer.write(message.encode() + b"\n")
         await writer.drain()
-        logging.info(f"Message '{message}' sent.")
+        # logging.info(f"Message '{message}' sent.")
 
 
 async def read_messages(reader, messages_queue, history_filename):
@@ -124,7 +119,7 @@ async def main(host, port_read, port_write, history_filename):
     await restore_messages(messages_queue, history_filename)
 
     await asyncio.gather(
-        # open_connection_and_read(host, port_read, messages_queue, history_filename),
+        open_connection_and_read(host, port_read, messages_queue, history_filename),
         open_connection_and_write(
             host, port_write, messages_queue, sending_queue, account_hash
         ),
