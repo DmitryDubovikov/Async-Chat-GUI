@@ -1,6 +1,5 @@
 import argparse
 import asyncio
-from async_timeout import timeout
 import json
 import logging
 import os
@@ -9,6 +8,8 @@ from contextlib import aclosing
 from tkinter import messagebox
 
 import aiofiles
+import anyio
+from async_timeout import timeout
 from dotenv import load_dotenv
 
 import gui
@@ -154,16 +155,19 @@ async def watch_for_connection(watchdog_queue, watchdog_logger):
         await asyncio.sleep(0)  # Пауза перед следующей проверкой очереди
 
 
-async def main(host, port_read, port_write, history_filename):
-    messages_queue = asyncio.Queue()
-    sending_queue = asyncio.Queue()
-    status_updates_queue = asyncio.Queue()
-    watchdog_queue = asyncio.Queue()
-
-    load_dotenv()
-    account_hash = os.getenv("ACCOUNT_HASH")
-
-    await restore_messages(messages_queue, history_filename)
+async def handle_connection(
+    host,
+    port_read,
+    port_write,
+    messages_queue,
+    sending_queue,
+    status_updates_queue,
+    watchdog_queue,
+    account_hash,
+    watchdog_logger,
+    history_filename,
+):
+    #  AnyIO:  https://www.youtube.com/watch?v=o850tKba3lg
 
     await asyncio.gather(
         open_connection_and_read(
@@ -185,6 +189,31 @@ async def main(host, port_read, port_write, history_filename):
         ),
         watch_for_connection(watchdog_queue, watchdog_logger),
         gui.draw(messages_queue, sending_queue, status_updates_queue),
+    )
+
+
+async def main(host, port_read, port_write, history_filename):
+    messages_queue = asyncio.Queue()
+    sending_queue = asyncio.Queue()
+    status_updates_queue = asyncio.Queue()
+    watchdog_queue = asyncio.Queue()
+
+    load_dotenv()
+    account_hash = os.getenv("ACCOUNT_HASH")
+
+    await restore_messages(messages_queue, history_filename)
+
+    await handle_connection(
+        host,
+        port_read,
+        port_write,
+        messages_queue,
+        sending_queue,
+        status_updates_queue,
+        watchdog_queue,
+        account_hash,
+        watchdog_logger,
+        history_filename,
     )
 
 
