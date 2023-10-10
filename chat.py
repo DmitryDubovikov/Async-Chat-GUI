@@ -17,15 +17,16 @@ class InvalidToken(Exception):
     pass
 
 
-async def send_messages(writer, sending_queue):
+async def send_messages(writer, sending_queue, watchdog_queue):
     while True:
         message = await sending_queue.get()
         message = message.replace("\n", "") + "\n"
         writer.write(message.encode() + b"\n")
         await writer.drain()
+        await watchdog_queue.put("Message sent")
 
 
-async def read_messages(reader, messages_queue, history_filename):
+async def read_messages(reader, messages_queue, watchdog_queue, history_filename):
     while True:
         data = await reader.read(1024)
         if not data:
@@ -33,13 +34,20 @@ async def read_messages(reader, messages_queue, history_filename):
 
         message = data.decode().strip()
         await messages_queue.put(message)
+        await watchdog_queue.put("New message in chat")
 
         async with aiofiles.open(history_filename, mode="a") as file:
             await file.write(message + "\n")
 
 
 async def open_connection_and_write(
-    host, port, messages_queue, sending_queue, status_updates_queue, account_hash
+    host,
+    port,
+    messages_queue,
+    sending_queue,
+    status_updates_queue,
+    watchdog_queue,
+    account_hash,
 ):
     try:
         async with aclosing(await asyncio.open_connection(host, port)) as (
@@ -52,11 +60,12 @@ async def open_connection_and_write(
             try:
                 nickname = await authorise(reader, writer, account_hash)
                 logging.info(f"Выполнена авторизация. Пользователь {nickname}.")
+                await watchdog_queue.put("Connection is alive. Authorization done")
 
                 message = gui.NicknameReceived(nickname)
                 await status_updates_queue.put(message)
 
-                await send_messages(writer, sending_queue)
+                await send_messages(writer, sending_queue, watchdog_queue)
             except InvalidToken as e:
                 logging.error(f"An error occurred: {e}")
     except Exception as e:
@@ -70,7 +79,7 @@ async def open_connection_and_write(
 
 
 async def open_connection_and_read(
-    host, port, messages_queue, status_updates_queue, history_filename
+    host, port, messages_queue, status_updates_queue, watchdog_queue, history_filename
 ):
     while True:
         try:
@@ -80,7 +89,9 @@ async def open_connection_and_read(
             await status_updates_queue.put(message)
 
             async with aclosing(reader):
-                await read_messages(reader, messages_queue, history_filename)
+                await read_messages(
+                    reader, messages_queue, watchdog_queue, history_filename
+                )
         except Exception as e:
             logging.error(f"An error occurred: {e}")
 
@@ -129,10 +140,21 @@ async def authorise(reader, writer, account_hash):
     return get_nickname(response)
 
 
+async def watch_for_connection(watchdog_queue, watchdog_logger):
+    while True:
+        # Проверяем очередь watchdog_queue на наличие новых сообщений
+        if not watchdog_queue.empty():
+            message = await watchdog_queue.get()
+            watchdog_logger.info(f"Connection is alive. {message}")
+            watchdog_queue.task_done()  # Помечаем сообщение как обработанное
+        await asyncio.sleep(0)  # Пауза перед следующей проверкой очереди
+
+
 async def main(host, port_read, port_write, history_filename):
     messages_queue = asyncio.Queue()
     sending_queue = asyncio.Queue()
     status_updates_queue = asyncio.Queue()
+    watchdog_queue = asyncio.Queue()
 
     load_dotenv()
     account_hash = os.getenv("ACCOUNT_HASH")
@@ -141,7 +163,12 @@ async def main(host, port_read, port_write, history_filename):
 
     await asyncio.gather(
         open_connection_and_read(
-            host, port_read, messages_queue, status_updates_queue, history_filename
+            host,
+            port_read,
+            messages_queue,
+            status_updates_queue,
+            watchdog_queue,
+            history_filename,
         ),
         open_connection_and_write(
             host,
@@ -149,8 +176,10 @@ async def main(host, port_read, port_write, history_filename):
             messages_queue,
             sending_queue,
             status_updates_queue,
+            watchdog_queue,
             account_hash,
         ),
+        watch_for_connection(watchdog_queue, watchdog_logger),
         gui.draw(messages_queue, sending_queue, status_updates_queue),
     )
 
@@ -188,5 +217,8 @@ if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
     )
+
+    watchdog_logger = logging.getLogger("watchdog_logger")
+    watchdog_logger.setLevel(logging.INFO)
 
     asyncio.run(main(args.host, args.port_read, args.port_write, args.history_filename))
