@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+from async_timeout import timeout
 import json
 import logging
 import os
@@ -112,10 +113,10 @@ def get_nickname(input_string):
     end_index = input_string.find("}") + 1
 
     json_data = input_string[start_index:end_index]
+    data = json.loads(json_data)
 
     # Распарсить JSON-данные и получить значение по ключу "nickname"
     try:
-        data = json.loads(json_data)
         nickname = data["nickname"]
         return nickname
     except json.JSONDecodeError as e:
@@ -142,11 +143,14 @@ async def authorise(reader, writer, account_hash):
 
 async def watch_for_connection(watchdog_queue, watchdog_logger):
     while True:
-        # Проверяем очередь watchdog_queue на наличие новых сообщений
-        if not watchdog_queue.empty():
-            message = await watchdog_queue.get()
-            watchdog_logger.info(f"Connection is alive. {message}")
-            watchdog_queue.task_done()  # Помечаем сообщение как обработанное
+        async with timeout(1) as cm:
+            # Проверяем очередь watchdog_queue на наличие новых сообщений
+            if not watchdog_queue.empty():
+                message = await watchdog_queue.get()
+                watchdog_logger.info(f"Connection is alive. {message}")
+                watchdog_queue.task_done()  # Помечаем сообщение как обработанное
+        if cm.expired:
+            watchdog_logger.info("1s timeout is elapsed")
         await asyncio.sleep(0)  # Пауза перед следующей проверкой очереди
 
 
