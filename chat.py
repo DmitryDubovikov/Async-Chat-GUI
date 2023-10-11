@@ -8,9 +8,8 @@ from contextlib import aclosing
 from tkinter import messagebox
 
 import aiofiles
-from anyio import fail_after
+from anyio import create_task_group
 
-# from async_timeout import timeout
 from dotenv import load_dotenv
 
 import gui
@@ -146,7 +145,6 @@ async def authorise(reader, writer, account_hash):
 async def watch_for_connection(watchdog_queue, watchdog_logger):
     while True:
         try:
-            # Ожидание сообщения с тайм-аутом в 1 секунд
             message = await asyncio.wait_for(watchdog_queue.get(), timeout=1)
             watchdog_logger.info(f"Connection is alive. {message}")
         except asyncio.TimeoutError:
@@ -165,29 +163,32 @@ async def handle_connection(
     watchdog_logger,
     history_filename,
 ):
-    #  AnyIO:  https://www.youtube.com/watch?v=o850tKba3lg
+    try:
+        async with create_task_group() as tg:
+            tg.start_soon(
+                connect_and_read,
+                host,
+                port_read,
+                messages_queue,
+                status_updates_queue,
+                watchdog_queue,
+                history_filename,
+            )
+            tg.start_soon(
+                connect_and_write,
+                host,
+                port_write,
+                messages_queue,
+                sending_queue,
+                status_updates_queue,
+                watchdog_queue,
+                account_hash,
+            )
+            tg.start_soon(watch_for_connection, watchdog_queue, watchdog_logger),
+            tg.start_soon(gui.draw, messages_queue, sending_queue, status_updates_queue)
 
-    await asyncio.gather(
-        connect_and_read(
-            host,
-            port_read,
-            messages_queue,
-            status_updates_queue,
-            watchdog_queue,
-            history_filename,
-        ),
-        connect_and_write(
-            host,
-            port_write,
-            messages_queue,
-            sending_queue,
-            status_updates_queue,
-            watchdog_queue,
-            account_hash,
-        ),
-        watch_for_connection(watchdog_queue, watchdog_logger),
-        gui.draw(messages_queue, sending_queue, status_updates_queue),
-    )
+    except (gui.TkAppClosed, KeyboardInterrupt):
+        logging.info("Tk app closed. exiting ..")
 
 
 async def main(host, port_read, port_write, history_filename):
