@@ -180,31 +180,27 @@ async def handle_connection(
     watchdog_logger,
     history_filename,
 ):
-    try:
-        async with create_task_group() as tg:
-            tg.start_soon(
-                connect_and_read,
-                host,
-                port_read,
-                messages_queue,
-                status_updates_queue,
-                watchdog_queue,
-                history_filename,
-            )
-            tg.start_soon(
-                connect_and_write,
-                host,
-                port_write,
-                sending_queue,
-                status_updates_queue,
-                watchdog_queue,
-                account_hash,
-            )
-            tg.start_soon(watch_for_connection, watchdog_queue, watchdog_logger),
-            tg.start_soon(gui.draw, messages_queue, sending_queue, status_updates_queue)
-
-    except (gui.TkAppClosed, KeyboardInterrupt):
-        logging.info("Tk app closed. exiting ..")
+    async with create_task_group() as tg:
+        tg.start_soon(
+            connect_and_read,
+            host,
+            port_read,
+            messages_queue,
+            status_updates_queue,
+            watchdog_queue,
+            history_filename,
+        )
+        tg.start_soon(
+            connect_and_write,
+            host,
+            port_write,
+            sending_queue,
+            status_updates_queue,
+            watchdog_queue,
+            account_hash,
+        )
+        tg.start_soon(watch_for_connection, watchdog_queue, watchdog_logger),
+        tg.start_soon(gui.draw, messages_queue, sending_queue, status_updates_queue)
 
 
 async def main(host, port_read, port_write, history_filename):
@@ -269,4 +265,9 @@ if __name__ == "__main__":
     watchdog_logger = logging.getLogger("watchdog_logger")
     watchdog_logger.setLevel(logging.INFO)
 
-    asyncio.run(main(args.host, args.port_read, args.port_write, args.history_filename))
+    try:
+        asyncio.run(
+            main(args.host, args.port_read, args.port_write, args.history_filename)
+        )
+    except (gui.TkAppClosed, KeyboardInterrupt):
+        logging.info("gui was closed. exiting ..")
