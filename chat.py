@@ -8,8 +8,9 @@ from contextlib import aclosing
 from tkinter import messagebox
 
 import aiofiles
-import anyio
-from async_timeout import timeout
+from anyio import fail_after
+
+# from async_timeout import timeout
 from dotenv import load_dotenv
 
 import gui
@@ -42,7 +43,7 @@ async def read_messages(reader, messages_queue, watchdog_queue, history_filename
             await file.write(message + "\n")
 
 
-async def open_connection_and_write(
+async def connect_and_write(
     host,
     port,
     messages_queue,
@@ -80,7 +81,7 @@ async def open_connection_and_write(
         await writer.wait_closed()
 
 
-async def open_connection_and_read(
+async def connect_and_read(
     host, port, messages_queue, status_updates_queue, watchdog_queue, history_filename
 ):
     while True:
@@ -144,15 +145,12 @@ async def authorise(reader, writer, account_hash):
 
 async def watch_for_connection(watchdog_queue, watchdog_logger):
     while True:
-        async with timeout(1) as cm:
-            # Проверяем очередь watchdog_queue на наличие новых сообщений
-            if not watchdog_queue.empty():
-                message = await watchdog_queue.get()
-                watchdog_logger.info(f"Connection is alive. {message}")
-                watchdog_queue.task_done()  # Помечаем сообщение как обработанное
-        if cm.expired:
+        try:
+            # Ожидание сообщения с тайм-аутом в 1 секунд
+            message = await asyncio.wait_for(watchdog_queue.get(), timeout=1)
+            watchdog_logger.info(f"Connection is alive. {message}")
+        except asyncio.TimeoutError:
             watchdog_logger.info("1s timeout is elapsed")
-        await asyncio.sleep(0)  # Пауза перед следующей проверкой очереди
 
 
 async def handle_connection(
@@ -170,7 +168,7 @@ async def handle_connection(
     #  AnyIO:  https://www.youtube.com/watch?v=o850tKba3lg
 
     await asyncio.gather(
-        open_connection_and_read(
+        connect_and_read(
             host,
             port_read,
             messages_queue,
@@ -178,7 +176,7 @@ async def handle_connection(
             watchdog_queue,
             history_filename,
         ),
-        open_connection_and_write(
+        connect_and_write(
             host,
             port_write,
             messages_queue,
