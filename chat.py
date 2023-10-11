@@ -32,7 +32,8 @@ async def read_messages(reader, messages_queue, watchdog_queue, history_filename
     while True:
         data = await reader.read(1024)
         if not data:
-            break
+            # break
+            raise ConnectionError
 
         message = data.decode().strip()
         await messages_queue.put(message)
@@ -42,10 +43,18 @@ async def read_messages(reader, messages_queue, watchdog_queue, history_filename
             await file.write(message + "\n")
 
 
+async def ping_pong(reader, writer, watchdog_queue):
+    while True:
+        writer.write("\n".encode())
+        await writer.drain()
+        await reader.readline()
+        watchdog_queue.put_nowait("Ping successful")
+        await asyncio.sleep(10)
+
+
 async def connect_and_write(
     host,
     port,
-    messages_queue,
     sending_queue,
     status_updates_queue,
     watchdog_queue,
@@ -67,7 +76,15 @@ async def connect_and_write(
                 message = gui.NicknameReceived(nickname)
                 await status_updates_queue.put(message)
 
-                await send_messages(writer, sending_queue, watchdog_queue)
+                async with create_task_group() as tg:
+                    tg.start_soon(
+                        send_messages,
+                        writer,
+                        sending_queue,
+                        watchdog_queue,
+                    )
+                    tg.start_soon(ping_pong, reader, writer, watchdog_queue)
+
             except InvalidToken as e:
                 logging.error(f"An error occurred: {e}")
     except Exception as e:
@@ -178,7 +195,6 @@ async def handle_connection(
                 connect_and_write,
                 host,
                 port_write,
-                messages_queue,
                 sending_queue,
                 status_updates_queue,
                 watchdog_queue,
