@@ -1,10 +1,8 @@
 import argparse
 import asyncio
-import json
 import logging
 import os
 import sys
-from contextlib import aclosing
 from tkinter import messagebox
 
 import aiofiles
@@ -12,7 +10,7 @@ from anyio import create_task_group
 from dotenv import load_dotenv
 
 import gui
-from utils import connection
+from utils import connection, get_nickname
 
 
 class InvalidToken(Exception):
@@ -50,6 +48,39 @@ async def ping_pong(reader, writer, watchdog_queue):
         await reader.readline()
         watchdog_queue.put_nowait("Ping successful")
         await asyncio.sleep(10)
+
+
+async def authorise(reader, writer, account_hash):
+    message = account_hash + "\n"
+    writer.write(message.encode())
+    await writer.drain()
+
+    data = await reader.read(1024)
+    response = data.decode()
+    if "null" in response:
+        messagebox.showerror(
+            "Ошибка",
+            "Неверный токен. Пожалуйста, проверьте ваш токен и попробуйте снова.",
+        )
+        raise InvalidToken("Неверный токен получен от сервера.")
+    return get_nickname(response)
+
+
+async def restore_messages(messages_queue, history_filename):
+    async with aiofiles.open(history_filename, mode="r") as file:
+        lines = await file.readlines()
+        for line in lines:
+            message = line.strip()
+            await messages_queue.put(message)
+
+
+async def watch_for_connection(watchdog_queue, watchdog_logger):
+    while True:
+        try:
+            message = await asyncio.wait_for(watchdog_queue.get(), timeout=1)
+            watchdog_logger.info(f"Connection is alive. {message}")
+        except asyncio.TimeoutError:
+            watchdog_logger.info("1s timeout is elapsed")
 
 
 async def connect_and_write(
@@ -113,56 +144,6 @@ async def connect_and_read(
         await asyncio.sleep(5)
 
 
-async def restore_messages(messages_queue, history_filename):
-    async with aiofiles.open(history_filename, mode="r") as file:
-        lines = await file.readlines()
-        for line in lines:
-            message = line.strip()
-            await messages_queue.put(message)
-
-
-def get_nickname(input_string):
-    start_index = input_string.find("{")
-    end_index = input_string.find("}") + 1
-
-    json_data = input_string[start_index:end_index]
-    data = json.loads(json_data)
-
-    # Распарсить JSON-данные и получить значение по ключу "nickname"
-    try:
-        nickname = data["nickname"]
-        return nickname
-    except json.JSONDecodeError as e:
-        return f"Error decoding JSON: {e}"
-    except KeyError as e:
-        return f"KeyError: 'nickname' key not found in JSON data"
-
-
-async def authorise(reader, writer, account_hash):
-    message = account_hash + "\n"
-    writer.write(message.encode())
-    await writer.drain()
-
-    data = await reader.read(1024)
-    response = data.decode()
-    if "null" in response:
-        messagebox.showerror(
-            "Ошибка",
-            "Неверный токен. Пожалуйста, проверьте ваш токен и попробуйте снова.",
-        )
-        raise InvalidToken("Неверный токен получен от сервера.")
-    return get_nickname(response)
-
-
-async def watch_for_connection(watchdog_queue, watchdog_logger):
-    while True:
-        try:
-            message = await asyncio.wait_for(watchdog_queue.get(), timeout=1)
-            watchdog_logger.info(f"Connection is alive. {message}")
-        except asyncio.TimeoutError:
-            watchdog_logger.info("1s timeout is elapsed")
-
-
 async def handle_connection(
     host,
     port_read,
@@ -222,13 +203,6 @@ async def main(host, port_read, port_write, history_filename):
         history_filename,
     )
 
-    try:
-        asyncio.run(
-            main(args.host, args.port_read, args.port_write, args.history_filename)
-        )
-    except (gui.TkAppClosed, KeyboardInterrupt):
-        logging.info("gui was closed. exiting ..")
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Connect to a chat server.")
@@ -273,3 +247,5 @@ if __name__ == "__main__":
         )
     except (gui.TkAppClosed, KeyboardInterrupt):
         logging.info("gui was closed. exiting ..")
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
