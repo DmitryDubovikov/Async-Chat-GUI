@@ -118,11 +118,6 @@ async def connect_and_write(
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         sys.exit()
-    finally:
-        if not reader.at_eof():
-            reader.feed_eof()
-        writer.close()
-        await writer.wait_closed()
 
 
 async def connect_and_read(
@@ -156,34 +151,33 @@ async def handle_connection(
     watchdog_logger,
     history_filename,
 ):
-    while True:
-        try:
-            async with create_task_group() as tg:
-                tg.start_soon(
-                    connect_and_read,
-                    host,
-                    port_read,
-                    messages_queue,
-                    status_updates_queue,
-                    watchdog_queue,
-                    history_filename,
-                )
-                tg.start_soon(
-                    connect_and_write,
-                    host,
-                    port_write,
-                    sending_queue,
-                    status_updates_queue,
-                    watchdog_queue,
-                    account_hash,
-                )
-                tg.start_soon(watch_for_connection, watchdog_queue, watchdog_logger)
-        except (ConnectionError, ExceptionGroup):
-            logging.error(f"An error occurred: {e}")
-            await asyncio.sleep(5)
-        except Exception as e:
-            logging.error(f"An error occurred: {e}")
-            await asyncio.sleep(5)
+    try:
+        async with create_task_group() as tg:
+            tg.start_soon(
+                connect_and_read,
+                host,
+                port_read,
+                messages_queue,
+                status_updates_queue,
+                watchdog_queue,
+                history_filename,
+            )
+            tg.start_soon(
+                connect_and_write,
+                host,
+                port_write,
+                sending_queue,
+                status_updates_queue,
+                watchdog_queue,
+                account_hash,
+            )
+            tg.start_soon(watch_for_connection, watchdog_queue, watchdog_logger)
+    except (ConnectionError, ExceptionGroup):
+        logging.error(f"An error occurred: {e}")
+        await asyncio.sleep(5)
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        await asyncio.sleep(5)
 
 
 async def main(host, port_read, port_write, history_filename):
