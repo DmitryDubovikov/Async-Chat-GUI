@@ -9,10 +9,10 @@ from tkinter import messagebox
 
 import aiofiles
 from anyio import create_task_group
-
 from dotenv import load_dotenv
 
 import gui
+from utils import connection
 
 
 class InvalidToken(Exception):
@@ -61,10 +61,7 @@ async def connect_and_write(
     account_hash,
 ):
     try:
-        async with aclosing(await asyncio.open_connection(host, port)) as (
-            reader,
-            writer,
-        ):
+        async with connection(host, port) as (reader, writer):
             message = gui.SendingConnectionStateChanged.ESTABLISHED
             await status_updates_queue.put(message)
 
@@ -102,12 +99,10 @@ async def connect_and_read(
 ):
     while True:
         try:
-            reader, _ = await asyncio.open_connection(host, port)
+            async with connection(host, port) as (reader, writer):
+                message = gui.ReadConnectionStateChanged.ESTABLISHED
+                await status_updates_queue.put(message)
 
-            message = gui.ReadConnectionStateChanged.ESTABLISHED
-            await status_updates_queue.put(message)
-
-            async with aclosing(reader):
                 await read_messages(
                     reader, messages_queue, watchdog_queue, history_filename
                 )
@@ -226,6 +221,13 @@ async def main(host, port_read, port_write, history_filename):
         watchdog_logger,
         history_filename,
     )
+
+    try:
+        asyncio.run(
+            main(args.host, args.port_read, args.port_write, args.history_filename)
+        )
+    except (gui.TkAppClosed, KeyboardInterrupt):
+        logging.info("gui was closed. exiting ..")
 
 
 if __name__ == "__main__":
