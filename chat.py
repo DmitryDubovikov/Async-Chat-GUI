@@ -176,7 +176,6 @@ async def handle_connection(
             account_hash,
         )
         tg.start_soon(watch_for_connection, watchdog_queue, watchdog_logger),
-        tg.start_soon(gui.draw, messages_queue, sending_queue, status_updates_queue)
 
 
 async def main(host, port_read, port_write, history_filename):
@@ -190,18 +189,21 @@ async def main(host, port_read, port_write, history_filename):
 
     await restore_messages(messages_queue, history_filename)
 
-    await handle_connection(
-        host,
-        port_read,
-        port_write,
-        messages_queue,
-        sending_queue,
-        status_updates_queue,
-        watchdog_queue,
-        account_hash,
-        watchdog_logger,
-        history_filename,
-    )
+    async with create_task_group() as tg:
+        tg.start_soon(
+            handle_connection,
+            host,
+            port_read,
+            port_write,
+            messages_queue,
+            sending_queue,
+            status_updates_queue,
+            watchdog_queue,
+            account_hash,
+            watchdog_logger,
+            history_filename,
+        )
+        tg.start_soon(gui.draw, messages_queue, sending_queue, status_updates_queue)
 
 
 if __name__ == "__main__":
